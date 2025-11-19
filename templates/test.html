@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream Test</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; background-color: #f0f0f0; }
+        .container { max-width: 1200px; margin: auto; }
+        h1, h2 { text-align: center; }
+        .hidden { display: none; }
+        .video-container { display: flex; justify-content: space-around; gap: 2em; }
+        .video-box { background-color: white; padding: 1em; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        video { max-width: 100%; border: 1px solid #ccc; }
+        #streamData { background-color: #111; color: #0f0; padding: 1em; height: 300px; overflow-y: scroll; white-space: pre-wrap; }
+        .controls { text-align: center; margin: 2em 0; }
+        button { font-size: 1.2em; padding: 0.5em 1em; cursor: pointer; }
+        #log { border: 1px solid #ccc; padding: 1em; height: 150px; overflow-y: scroll; background-color: #fff; margin-top: 2em;}
+        .uuid-container { text-align: center; margin: 1em 0; }
+        #videoUuid { font-family: monospace; font-size: 1.1em; padding: 0.25em; border: 1px solid #ccc; }
+        #copyUuidBtn { padding: 0.25em 0.5em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Webcam Video Streamer</h1>
+
+        <div class="controls">
+            <button id="startCamera">1. Start Camera</button>
+            <button id="startStream" disabled>2. Start Streaming</button>
+        </div>
+
+        <div id="uuidBox" class="uuid-container hidden">
+            <h2>Stream UUID</h2>
+            <input type="text" id="videoUuid" readonly>
+            <button id="copyUuidBtn">Copy</button>
+        </div>
+
+        <div class="video-container">
+            <div class="video-box">
+                <h2>My Camera (Streaming)</h2>
+                <video id="localVideo" autoplay muted playsinline></video>
+            </div>
+            <div class="video-box">
+                <h2>Stream Data (Processed)</h2>
+                <pre id="streamData"></pre>
+            </div>
+        </div>
+
+        <canvas id="canvas" class="hidden"></canvas>
+        <pre id="log"></pre>
+    </div>
+
+    <script>
+        const startCameraBtn = document.getElementById('startCamera');
+        const startStreamBtn = document.getElementById('startStream');
+        const localVideo = document.getElementById('localVideo');
+        const streamDataPre = document.getElementById('streamData');
+        const logDiv = document.getElementById('log');
+        const canvas = document.getElementById('canvas');
+        const uuidBox = document.getElementById('uuidBox');
+        const videoUuidInput = document.getElementById('videoUuid');
+        const copyUuidBtn = document.getElementById('copyUuidBtn');
+
+        let socket;
+        let streamToken;
+        let streamInterval;
+
+        // 1. Start Camera
+        startCameraBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                localVideo.srcObject = stream;
+                log('Camera started.');
+                startStreamBtn.disabled = false;
+                startCameraBtn.disabled = true;
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+                log(`Error accessing camera: ${error.message}`);
+            }
+        });
+
+        // 2. Start Streaming
+        startStreamBtn.addEventListener('click', async () => {
+            startStreamBtn.disabled = true;
+            log('Requesting stream token...');
+            try {
+                // Step 1: Request a stream token
+                const requestResponse = await fetch('/stream/request', { method: 'POST' });
+                const requestData = await requestResponse.json();
+                
+                if (!requestResponse.ok) {
+                    throw new Error(requestData.detail || 'Failed to request stream token.');
+                }
+                
+                // Stream ID and Video ID are the same
+                streamToken = requestData.stream_token || requestData.stream_id;
+                const streamId = requestData.stream_id || requestData.stream_token;
+                const videoId = requestData.video_id || requestData.video_uuid || streamId;
+                const websocketUrl = requestData.websocket_url;
+                
+                log(`Received stream ID: ${streamId}`);
+                log(`Stream ID = Video ID = ${streamId}`);
+
+                // Display the ID (same for both stream and video)
+                videoUuidInput.value = streamId;
+                uuidBox.classList.remove('hidden');
+                
+                log('Connecting WebSocket...');
+
+                // Connect to WebSocket (token is immediately ready)
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}${websocketUrl}`;
+                
+                log(`Connecting to: ${wsUrl}`);
+                console.log(`WebSocket URL: ${wsUrl}`);
+                
+                try {
+                    socket = new WebSocket(wsUrl);
+                } catch (error) {
+                    log(`Failed to create WebSocket: ${error.message}`);
+                    console.error('WebSocket creation error:', error);
+                    startStreamBtn.disabled = false;
+                    return;
+                }
+
+                socket.onopen = () => {
+                    log('WebSocket connected. Streaming video...');
+                    console.log('WebSocket connection opened');
+                    // Отправляем кадры с частотой 30 FPS (1000ms / 30 ≈ 33ms)
+                    streamInterval = setInterval(sendFrame, 33);
+                };
+
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        streamDataPre.textContent = JSON.stringify(data, null, 2);
+                        log(`Received update at ${new Date(data.time * 1000).toLocaleTimeString()}`);
+                    } catch (error) {
+                        console.error('Error parsing WebSocket message:', error);
+                        log(`Error parsing message: ${error.message}`);
+                    }
+                };
+
+                socket.onclose = (event) => {
+                    log(`WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason || 'None'}`);
+                    console.log(`WebSocket closed. Code: ${event.code}, Reason: ${event.reason}, WasClean: ${event.wasClean}`);
+                    clearInterval(streamInterval);
+                    if (event.code === 1006) {
+                        log('Connection closed abnormally. Check server status.');
+                    }
+                };
+
+                socket.onerror = (error) => {
+                    log(`WebSocket error occurred. Check console for details.`);
+                    console.error('WebSocket error details:', {
+                        error: error,
+                        readyState: socket.readyState,
+                        url: wsUrl
+                    });
+                    clearInterval(streamInterval);
+                };
+
+            } catch (error) {
+                console.error('Error during streaming process:', error);
+                log(`Error: ${error.message}`);
+                startStreamBtn.disabled = false;
+            }
+        });
+
+        // Copy UUID to clipboard
+        copyUuidBtn.addEventListener('click', () => {
+            videoUuidInput.select();
+            document.execCommand('copy');
+            log(`Copied UUID to clipboard: ${videoUuidInput.value}`);
+        });
+
+        function sendFrame() {
+            if (socket.readyState !== WebSocket.OPEN) return;
+
+            const context = canvas.getContext('2d');
+            canvas.width = localVideo.videoWidth;
+            canvas.height = localVideo.videoHeight;
+            context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+            const frame = canvas.toDataURL('image/jpeg', 0.7);
+            socket.send(frame);
+        }
+
+        function log(message) {
+            logDiv.innerHTML += `${new Date().toLocaleTimeString()}: ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+    </script>
+</body>
+</html>

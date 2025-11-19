@@ -1,0 +1,10 @@
+fastapi==0.104.1
+uvicorn==0.24.0.post1
+websockets
+jinja2
+opencv-python
+numpy
+openai
+python-multipart
+requests
+beautifulsoup4

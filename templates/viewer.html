@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Viewer</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; background-color: #f0f0f0; text-align: center; }
+        .container { max-width: 900px; margin: auto; background-color: white; padding: 2em; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        #streamData { background-color: #111; color: #0f0; padding: 1em; height: 400px; overflow-y: scroll; white-space: pre-wrap; text-align: left; }
+        .input-group { margin-bottom: 1em; }
+        input { font-size: 1em; padding: 0.5em; }
+        button { font-size: 1em; padding: 0.5em 1em; cursor: pointer; }
+        #status { margin-top: 1em; font-style: italic; color: #555; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Live Stream Viewer</h1>
+        <div class="input-group">
+            <input type="text" id="streamTokenInput" placeholder="Enter Stream Token">
+            <button id="watchStreamBtn">Watch Stream</button>
+        </div>
+        <pre id="streamData"></pre>
+        <p id="status">Enter a Stream Token and click "Watch Stream" to begin.</p>
+    </div>
+
+    <script>
+        const streamTokenInput = document.getElementById('streamTokenInput');
+        const watchStreamBtn = document.getElementById('watchStreamBtn');
+        const streamDataPre = document.getElementById('streamData');
+        const status = document.getElementById('status');
+        let socket;
+
+        // Check if stream_token is in the URL query parameters
+        window.onload = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('stream_token');
+            if (token) {
+                streamTokenInput.value = token;
+                connectToStream(token);
+            }
+        };
+
+        watchStreamBtn.addEventListener('click', () => {
+            const token = streamTokenInput.value;
+            if (token) {
+                connectToStream(token);
+            } else {
+                status.textContent = 'Please enter a Stream Token.';
+            }
+        });
+
+        function connectToStream(token) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.close();
+            }
+
+            status.textContent = `Connecting to stream ${token}...`;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/stream/${token}`;
+            
+            console.log(`Attempting WebSocket connection to: ${wsUrl}`);
+            status.textContent = `Connecting to ${wsUrl}...`;
+            
+            try {
+                socket = new WebSocket(wsUrl);
+            } catch (error) {
+                status.textContent = `Failed to create WebSocket: ${error.message}`;
+                console.error('WebSocket creation error:', error);
+                return;
+            }
+
+            socket.onopen = () => {
+                console.log('WebSocket connected successfully');
+                status.textContent = `Connected to stream ${token}. Waiting for data...`;
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    const prettyData = JSON.stringify(data, null, 2);
+                    streamDataPre.textContent = prettyData;
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                    streamDataPre.textContent = `Raw data: ${event.data}`;
+                }
+            };
+
+            socket.onclose = (event) => {
+                console.log(`WebSocket closed. Code: ${event.code}, Reason: ${event.reason}, WasClean: ${event.wasClean}`);
+                if (event.code === 4000) {
+                    status.textContent = `Error: ${event.reason || 'Invalid stream token'}`;
+                } else if (event.code === 1006) {
+                    status.textContent = `Connection closed abnormally. Check if server is running and token is valid.`;
+                } else {
+                    status.textContent = `Disconnected from stream ${token}. Code: ${event.code}`;
+                }
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket error details:', {
+                    error: error,
+                    readyState: socket.readyState,
+                    url: wsUrl
+                });
+                status.textContent = `Error connecting to stream. Check console for details.`;
+            };
+        }
+    </script>
+</body>
+</html>

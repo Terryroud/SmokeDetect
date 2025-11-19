@@ -1,0 +1,8 @@
+[ca5aa2a3-82c4-45b3-a6d4-5e6294af3b63] Запуск обработки видео потока с URL: https://sochi.camera:8443/cam_182/tracks-v1/mono.m3u8?token=c62a71e161d0891cfa53c779206f37169f2e26be-ac64d889fcc3e6558c0e15d7d3890480-1764029264-1764000464
+[ca5aa2a3-82c4-45b3-a6d4-5e6294af3b63] Обнаружен веб-страничный URL, пытаемся извлечь HLS URL
+[ca5aa2a3-82c4-45b3-a6d4-5e6294af3b63] Критическая ошибка при обработке потока: name 'extract_hls_url_from_page' is not defined
+Traceback (most recent call last):
+  File "/home/alfa/backend/SmokeDetect/routers/streaming.py", line 528, in process_video_stream_from_url
+    actual_url = await asyncio.to_thread(extract_hls_url_from_page, page_url)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'extract_hls_url_from_page' is not defined
